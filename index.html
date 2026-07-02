@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nakládka lodního kontejneru</title>
+    <link rel="stylesheet" href="styles.css?v=10" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="workspace" aria-label="Plán nakládky">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Objemový plán</p>
+            <h1>Nakládka kontejneru</h1>
+          </div>
+          <div class="fill-meter" aria-label="Zaplnění kontejneru">
+            <span id="fillPercent">100 %</span>
+            <div class="meter-track"><div id="meterBar" class="meter-bar"></div></div>
+          </div>
+        </header>
+
+        <div class="layout">
+          <section class="panel controls" aria-label="Nastavení">
+            <div class="section-title">
+              <h2>Kontejner</h2>
+              <span id="containerVolume">0 m3</span>
+            </div>
+
+            <div class="grid-3">
+              <label>
+                Délka (m)
+                <input id="containerLength" type="number" min="0.1" max="100" step="0.01" value="5.9" />
+              </label>
+              <label>
+                Šířka (m)
+                <input id="containerWidth" type="number" min="0.1" max="100" step="0.01" value="2.35" />
+              </label>
+              <label>
+                Výška (m)
+                <input id="containerHeight" type="number" min="0.1" max="100" step="0.01" value="2.39" />
+              </label>
+            </div>
+
+            <div class="mode-switch" aria-label="Rezim rozlozeni">
+              <button class="mode-button is-active" type="button" data-mode="percent">Procenta</button>
+              <button class="mode-button" type="button" data-mode="pieces">Kusy</button>
+            </div>
+
+            <div class="section-title packages-title">
+              <h2>Druhy obalů</h2>
+              <button id="addPackage" class="icon-button" type="button" aria-label="Přidat obal" title="Přidat obal">+</button>
+            </div>
+
+            <div id="packages" class="packages"></div>
+
+            <div class="actions">
+              <button id="confirmLayout" type="button">Potvrdit a přepočítat</button>
+              <button id="normalizeShares" type="button">Vyrovnat na 100 %</button>
+              <button id="resetDemo" type="button" class="secondary">Ukázková data</button>
+            </div>
+
+            <p id="warning" class="warning" role="status"></p>
+          </section>
+
+          <section class="visual-area" aria-label="Vizualizace kontejneru" data-view="three">
+            <div class="view-tabs" aria-label="Rezim zobrazeni">
+              <button class="view-tab is-active" type="button" data-view="three">3D</button>
+              <button class="view-tab" type="button" data-view="two">2D stěna</button>
+              <button class="view-tab" type="button" data-view="volume">Objem</button>
+              <span class="view-divider" aria-hidden="true"></span>
+              <button id="zoomOut" class="view-tool" type="button" aria-label="Oddálit" title="Oddálit">−</button>
+              <button id="zoomIn" class="view-tool" type="button" aria-label="Přiblížit" title="Přiblížit">+</button>
+              <button id="frontView" class="view-tool view-tool-wide" type="button" aria-label="Pohled přesně zpředu" title="Pohled přesně zpředu">Čelo</button>
+              <button id="resetView" class="view-tool" type="button" aria-label="Obnovit pohled" title="Obnovit pohled">↺</button>
+              <button id="expandView" class="view-tool" type="button" aria-label="Roztáhnout zobrazení" title="Roztáhnout zobrazení" aria-pressed="false">⛶</button>
+            </div>
+            <div class="packing-navigator" aria-label="Postup nakládky">
+              <div class="packing-row">
+                <button id="showAllPacking" type="button">Celý náklad</button>
+                <button id="previousLayer" class="icon-button" type="button" aria-label="Předchozí stěna" title="Předchozí stěna">‹</button>
+                <strong id="layerLabel">Stěna 1</strong>
+                <button id="nextLayer" class="icon-button" type="button" aria-label="Další stěna" title="Další stěna">›</button>
+                <button id="showLayerPacking" type="button">Celá stěna</button>
+              </div>
+              <div class="packing-row packing-steps">
+                <button id="showStepPacking" type="button">Krokovat</button>
+                <button id="previousStep" class="icon-button" type="button" aria-label="Předchozí krok" title="Předchozí krok">‹</button>
+                <strong id="stepLabel">Krok 1</strong>
+                <button id="nextStep" class="icon-button" type="button" aria-label="Další krok" title="Další krok">›</button>
+              </div>
+              <div class="packing-row depth-row">
+                <button id="previousDepth" class="icon-button" type="button" aria-label="Předchozí hloubkový řez" title="Předchozí hloubkový řez">‹</button>
+                <strong id="depthLabel">Hloubka 1</strong>
+                <button id="nextDepth" class="icon-button" type="button" aria-label="Další hloubkový řez" title="Další hloubkový řez">›</button>
+              </div>
+              <p id="placementDetail" class="placement-detail"></p>
+            </div>
+            <div class="three-view" data-active-view="three">
+              <canvas id="container3d" aria-label="3D zobrazeni kontejneru"></canvas>
+              <div id="wall2d" class="wall-2d" aria-label="Čelní 2D zobrazení stěny"></div>
+              <div id="threeFallback" class="three-fallback" hidden>3D zobrazeni se nepodarilo nacist.</div>
+            </div>
+            <div class="container-visual" aria-hidden="true">
+              <div id="containerBlocks" class="container-blocks"></div>
+              <div class="container-lines"></div>
+            </div>
+            <div id="legend" class="legend"></div>
+          </section>
+
+          <section class="panel results" aria-label="Výsledky">
+            <div class="section-title">
+              <h2>Výpočet</h2>
+              <span id="shareTotal">100 %</span>
+            </div>
+            <div class="summary">
+              <div>
+                <span>Objem kontejneru</span>
+                <strong id="summaryVolume">0 m3</strong>
+              </div>
+              <div>
+                <span>Skutečné zaplnění</span>
+                <strong id="summaryFill">100 %</strong>
+              </div>
+              <div>
+                <span>Druhů obalů</span>
+                <strong id="summaryTypes">0</strong>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Obal</th>
+                    <th>Podíl</th>
+                    <th>Objem</th>
+                    <th>Kusy</th>
+                  </tr>
+                </thead>
+                <tbody id="resultRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <template id="packageTemplate">
+      <article class="package-card">
+        <div class="package-head">
+          <select class="package-type-select" aria-label="Vybrat uložený typ obalu"></select>
+          <input class="package-name" type="text" aria-label="Název obalu" />
+          <button class="remove-package icon-button" type="button" aria-label="Odebrat obal" title="Odebrat obal">×</button>
+        </div>
+        <div class="grid-5">
+          <label>
+            Délka (mm)
+            <input class="pkg-length" type="number" min="1" step="1" />
+          </label>
+          <label>
+            Šířka (mm)
+            <input class="pkg-width" type="number" min="1" step="1" />
+          </label>
+          <label>
+            Výška (mm)
+            <input class="pkg-height" type="number" min="1" step="1" />
+          </label>
+          <label class="share-field">
+            Podíl (%)
+            <input class="pkg-share" type="number" min="0" step="0.1" />
+          </label>
+          <label class="pieces-field">
+            Kusy
+            <input class="pkg-pieces" type="number" min="0" step="1" />
+          </label>
+        </div>
+      </article>
+    </template>
+
+    <script src="three.global.js?v=2"></script>
+  <script src="app.js?v=51"></script>
+  </body>
+</html>
