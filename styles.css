@@ -49,6 +49,16 @@ body[data-auth-state="authenticated"] .auth-shell {
   max-width: 520px;
 }
 
+.auth-logo {
+  display: block;
+  width: min(100%, 360px);
+  height: auto;
+  margin: 0 0 30px;
+  padding: 18px 22px;
+  border-radius: 6px;
+  background: #17231d;
+}
+
 .auth-brand h1 {
   max-width: 500px;
   font-size: 4rem;
@@ -932,6 +942,12 @@ th {
 
   .auth-brand h1 {
     font-size: 2.7rem;
+  }
+
+  .auth-logo {
+    width: min(100%, 280px);
+    margin-bottom: 20px;
+    padding: 14px 18px;
   }
 
   .auth-panel {
