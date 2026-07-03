@@ -11,6 +11,10 @@
   --shadow: 0 20px 50px rgba(34, 42, 38, 0.12);
 }
 
+[hidden] {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -20,6 +24,133 @@ body {
   font-family: Inter, "Segoe UI", Arial, sans-serif;
   background: var(--bg);
   color: var(--ink);
+}
+
+body:not([data-auth-state="authenticated"]) .app {
+  display: none;
+}
+
+body[data-auth-state="authenticated"] .auth-shell {
+  display: none;
+}
+
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(360px, 520px);
+  justify-content: center;
+  align-items: center;
+  gap: 72px;
+  padding: 48px;
+  background: #edf1ec;
+}
+
+.auth-brand {
+  max-width: 520px;
+}
+
+.auth-brand h1 {
+  max-width: 500px;
+  font-size: 4rem;
+}
+
+.auth-brand > p:last-child {
+  color: var(--muted);
+  font-size: 1.15rem;
+}
+
+.auth-loading,
+.auth-panel {
+  width: min(100%, 520px);
+  border: 1px solid var(--line);
+  background: white;
+  box-shadow: var(--shadow);
+  padding: 28px;
+}
+
+.auth-loading {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 26px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f5f7f5;
+}
+
+.auth-tab {
+  min-height: 40px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.auth-tab.is-active {
+  background: var(--ink);
+  color: white;
+}
+
+.auth-form {
+  display: grid;
+  gap: 16px;
+}
+
+.auth-form h2 {
+  margin-bottom: 4px;
+  font-size: 1.45rem;
+}
+
+.primary-command,
+.secondary-command,
+.account-tools button,
+.admin-actions button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 14px;
+  background: var(--accent);
+  color: white;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.primary-command {
+  margin-top: 4px;
+  min-height: 46px;
+}
+
+.primary-command.is-busy {
+  opacity: 0.65;
+}
+
+.secondary-command,
+.account-tools .secondary-command {
+  background: #34403b;
+}
+
+.auth-message {
+  min-height: 1.4em;
+  margin: 18px 0 0;
+  color: var(--danger);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.auth-message[data-type="success"] {
+  color: var(--accent);
+}
+
+.auth-message[data-type="info"] {
+  color: var(--muted);
 }
 
 body.visual-expanded {
@@ -49,6 +180,82 @@ select {
   gap: 24px;
   margin-bottom: 18px;
 }
+
+.topbar-actions {
+  display: flex;
+  align-items: end;
+  gap: 18px;
+}
+
+.account-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.account-tools span {
+  max-width: 180px;
+  color: var(--muted);
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-dialog {
+  width: min(1000px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 22px;
+  color: var(--ink);
+  background: white;
+  box-shadow: var(--shadow);
+}
+
+.admin-dialog::backdrop {
+  background: rgba(19, 25, 22, 0.62);
+}
+
+.admin-dialog-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.admin-table-wrap {
+  margin-top: 18px;
+  overflow: auto;
+}
+
+.admin-table {
+  width: 100%;
+  min-width: 720px;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.admin-actions .danger-command {
+  background: var(--danger);
+}
+
+.status-badge {
+  display: inline-block;
+  border-left: 5px solid var(--muted);
+  padding-left: 8px;
+  font-weight: 800;
+}
+
+.status-badge[data-status="active"] { border-color: var(--accent); }
+.status-badge[data-status="pending"] { border-color: var(--accent-2); }
+.status-badge[data-status="rejected"],
+.status-badge[data-status="disabled"] { border-color: var(--danger); }
 
 .eyebrow {
   margin: 0 0 4px;
@@ -716,6 +923,21 @@ th {
 }
 
 @media (max-width: 720px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+    align-content: center;
+    gap: 26px;
+    padding: 20px;
+  }
+
+  .auth-brand h1 {
+    font-size: 2.7rem;
+  }
+
+  .auth-panel {
+    padding: 20px;
+  }
+
   .app {
     padding: 14px;
   }
@@ -723,6 +945,16 @@ th {
   .topbar {
     display: grid;
     align-items: start;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    display: grid;
+  }
+
+  .account-tools {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .fill-meter {

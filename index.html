@@ -4,9 +4,73 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Nakládka lodního kontejneru</title>
-    <link rel="stylesheet" href="styles.css?v=10" />
+    <link rel="stylesheet" href="styles.css?v=12" />
   </head>
-  <body>
+  <body data-auth-state="loading">
+    <section id="authShell" class="auth-shell" aria-label="Přihlášení">
+      <div class="auth-brand">
+        <p class="eyebrow">Nakládka kontejneru</p>
+        <h1>Přístup k plánovači</h1>
+        <p>Účty schvaluje administrátor.</p>
+      </div>
+
+      <div id="authLoading" class="auth-loading" role="status">Ověřuji přihlášení…</div>
+
+      <div id="authPanel" class="auth-panel" hidden>
+        <div id="authTabs" class="auth-tabs" aria-label="Režim účtu">
+          <button class="auth-tab is-active" type="button" data-auth-view="login">Přihlášení</button>
+          <button class="auth-tab" type="button" data-auth-view="register">Registrace</button>
+        </div>
+
+        <form id="loginForm" class="auth-form">
+          <h2>Přihlášení</h2>
+          <label>E-mail
+            <input id="loginEmail" name="email" type="email" autocomplete="username" required />
+          </label>
+          <label>Heslo
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button class="primary-command" type="submit">Přihlásit se</button>
+        </form>
+
+        <form id="registerForm" class="auth-form" hidden>
+          <h2>Nová registrace</h2>
+          <label>Jméno
+            <input id="registerName" name="name" type="text" autocomplete="name" minlength="2" maxlength="80" required />
+          </label>
+          <label>E-mail
+            <input id="registerEmail" name="email" type="email" autocomplete="email" required />
+          </label>
+          <label>Heslo
+            <input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="12" required />
+          </label>
+          <label>Heslo znovu
+            <input id="registerPasswordAgain" type="password" autocomplete="new-password" minlength="12" required />
+          </label>
+          <button class="primary-command" type="submit">Odeslat registraci</button>
+        </form>
+
+        <form id="setupAdminForm" class="auth-form" hidden>
+          <h2>Nastavení administrátora</h2>
+          <label>Jméno
+            <input id="setupAdminName" type="text" autocomplete="name" minlength="2" maxlength="80" value="Pavel Stradal" required />
+          </label>
+          <label>E-mail
+            <input id="setupAdminEmail" type="email" autocomplete="username" value="pavel.stradal@bofillex.cz" required />
+          </label>
+          <label>Nové heslo
+            <input id="setupAdminPassword" type="password" autocomplete="new-password" minlength="12" required />
+          </label>
+          <label>Heslo znovu
+            <input id="setupAdminPasswordAgain" type="password" autocomplete="new-password" minlength="12" required />
+          </label>
+          <button class="primary-command" type="submit">Vytvořit administrátora</button>
+        </form>
+
+        <p id="authMessage" class="auth-message" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
     <main class="app">
       <section class="workspace" aria-label="Plán nakládky">
         <header class="topbar">
@@ -14,9 +78,16 @@
             <p class="eyebrow">Objemový plán</p>
             <h1>Nakládka kontejneru</h1>
           </div>
-          <div class="fill-meter" aria-label="Zaplnění kontejneru">
-            <span id="fillPercent">100 %</span>
-            <div class="meter-track"><div id="meterBar" class="meter-bar"></div></div>
+          <div class="topbar-actions">
+            <div class="fill-meter" aria-label="Zaplnění kontejneru">
+              <span id="fillPercent">100 %</span>
+              <div class="meter-track"><div id="meterBar" class="meter-bar"></div></div>
+            </div>
+            <div class="account-tools">
+              <span id="currentUserName"></span>
+              <button id="openAdmin" type="button" hidden>Registrace</button>
+              <button id="logoutButton" type="button" class="secondary-command">Odhlásit</button>
+            </div>
           </div>
         </header>
 
@@ -146,6 +217,23 @@
       </section>
     </main>
 
+    <dialog id="adminDialog" class="admin-dialog">
+      <div class="admin-dialog-head">
+        <div>
+          <p class="eyebrow">Administrace</p>
+          <h2>Správa registrací</h2>
+        </div>
+        <button id="closeAdmin" class="icon-button" type="button" aria-label="Zavřít správu registrací" title="Zavřít">×</button>
+      </div>
+      <p id="adminMessage" class="auth-message" role="status" aria-live="polite"></p>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Uživatel</th><th>Stav</th><th>Registrace</th><th>Akce</th></tr></thead>
+          <tbody id="adminUsers"></tbody>
+        </table>
+      </div>
+    </dialog>
+
     <template id="packageTemplate">
       <article class="package-card">
         <div class="package-head">
@@ -178,7 +266,6 @@
       </article>
     </template>
 
-    <script src="three.global.js?v=2"></script>
-  <script src="app.js?v=51"></script>
+    <script src="auth.js?v=1"></script>
   </body>
 </html>

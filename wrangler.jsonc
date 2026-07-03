@@ -1,0 +1,13 @@
+{
+  "name": "nakladka-kontejneru",
+  "compatibility_date": "2026-07-03",
+  "pages_build_output_dir": "dist",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "container-loading-auth",
+      "database_id": "83d8e983-cd0f-4ef3-8697-2cf99062b9d6",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

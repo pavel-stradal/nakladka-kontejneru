@@ -2,7 +2,7 @@ const THREE = window.THREE;
 
 const colors = ["#00a878", "#ff5a00", "#2563eb", "#d81b60", "#7cb518", "#7c3aed", "#eab308", "#dc2626"];
 const catalogStorageKey = "container-package-catalog-v1";
-const layoutStorageKey = "container-active-layout-v1";
+const layoutStorageKey = "container-active-layout-v2";
 const defaultPackageCatalog = [
   { id: "crate-a", name: "330ml chubby", length: 0.41, width: 0.271, height: 0.118 },
   { id: "carton-b", name: "Karton B", length: 0.5, width: 0.35, height: 0.28 },
@@ -27,7 +27,11 @@ function loadPackageCatalog() {
         item && typeof item.id === "string" && item.id && typeof item.name === "string" &&
         Number.isFinite(Number(item.length)) && Number.isFinite(Number(item.width)) && Number.isFinite(Number(item.height))
       );
-      if (valid.length) return valid;
+      if (valid.length) {
+        const merged = new Map(defaultPackageCatalog.map((item) => [item.id, { ...item }]));
+        valid.forEach((item) => merged.set(item.id, item));
+        return [...merged.values()];
+      }
     }
   } catch (error) {
     console.warn("Katalog obalů se nepodařilo načíst.", error);
@@ -97,7 +101,7 @@ const state = {
     height: Math.max(0.1, Math.min(100, Number(savedLayout?.container?.height) || 2.39)),
   },
   catalog: initialCatalog,
-  packages: recoveredSavedPackages?.length ? recoveredSavedPackages : createDefaultPackages(initialCatalog),
+  packages: recoveredSavedPackages?.length ? recoveredSavedPackages : [],
 };
 
 const els = {
@@ -262,7 +266,7 @@ function renderPackageCards() {
     node.querySelector(".pkg-height").value = Math.round(pkg.height * 1000);
     node.querySelector(".pkg-share").value = pkg.share;
     node.querySelector(".pkg-pieces").value = pkg.pieces;
-    node.querySelector(".remove-package").disabled = state.packages.length === 1;
+    node.querySelector(".remove-package").disabled = false;
     node.style.borderTop = `4px solid ${colors[index % colors.length]}`;
     els.packages.appendChild(node);
   });
@@ -308,7 +312,9 @@ function render() {
   els.meterBar.style.width = `${Math.max(0, Math.min(100, actualFill))}%`;
 
   const warnings = [];
-  if (state.distributionMode === "percent" && Math.abs(totalShare - 100) > 0.05) {
+  if (!packages.length) {
+    warnings.push("Kontejner je prĂˇzdnĂ˝. PĹ™idejte prvnĂ­ obal tlaÄŤĂ­tkem plus.");
+  } else if (state.distributionMode === "percent" && Math.abs(totalShare - 100) > 0.05) {
     warnings.push(`Součet podílů je ${shareLabel}; výpočet ho přepočítává poměrem na 100 %.`);
   }
   if (state.distributionMode === "pieces" && totalPieces <= 0) {
@@ -917,6 +923,25 @@ function buildPackingPlan(packages, dimensions) {
   const cacheKey = JSON.stringify({ packages, dimensions });
   if (packingCache.key === cacheKey && packingCache.plan) return packingCache.plan;
 
+  if (!packages.length) {
+    const plan = {
+      placements: [],
+      layers: [],
+      wallDepth: 0,
+      containerLength: dimensions.length,
+      targetCount: 0,
+      overlapCount: 0,
+      actualShares: [],
+      maxShareDeviation: 0,
+      limited: false,
+      packedPercent: 0,
+      actualCounts: [],
+      totalPackedPieces: 0,
+    };
+    packingCache = { key: cacheKey, plan };
+    return plan;
+  }
+
   const activeIndexes = packages
     .map((pkg, index) => ({ pkg, index }))
     .filter(({ pkg }) => pkg.normalizedShare > 1e-9)
@@ -1500,7 +1525,10 @@ els.packages.addEventListener("click", (event) => {
 
 els.addPackage.addEventListener("click", () => {
   const draftPackages = [...els.packages.querySelectorAll(".package-card")].map(readPackageCard);
-  draftPackages.push({ catalogId: null, name: `Obal ${draftPackages.length + 1}`, length: 0.4, width: 0.3, height: 0.25, share: 10, pieces: 1 });
+  const catalogItem = state.catalog[0];
+  draftPackages.push(catalogItem
+    ? { ...catalogItem, catalogId: catalogItem.id, share: draftPackages.length ? 10 : 100, pieces: 0 }
+    : { catalogId: null, name: `Obal ${draftPackages.length + 1}`, length: 0.4, width: 0.3, height: 0.25, share: draftPackages.length ? 10 : 100, pieces: 0 });
   renderDraftPackageCards(draftPackages);
   markLayoutPending();
 });
@@ -1596,11 +1624,19 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && els.visualArea.classList.contains("is-expanded")) setExpandedView(false);
 });
 
-document.body.dataset.distributionMode = state.distributionMode;
-els.containerLength.value = state.container.length;
-els.containerWidth.value = state.container.width;
-els.containerHeight.value = state.container.height;
-els.modeButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.mode === state.distributionMode));
-renderPackageCards();
-render();
-if (needsCatalogRecovery) saveActiveLayout();
+let plannerInitialized = false;
+function initializePlanner() {
+  if (plannerInitialized) return;
+  plannerInitialized = true;
+  document.body.dataset.distributionMode = state.distributionMode;
+  els.containerLength.value = state.container.length;
+  els.containerWidth.value = state.container.width;
+  els.containerHeight.value = state.container.height;
+  els.modeButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.mode === state.distributionMode));
+  renderPackageCards();
+  render();
+  if (needsCatalogRecovery) saveActiveLayout();
+}
+
+window.addEventListener("planner-authenticated", initializePlanner, { once: true });
+if (window.__authenticatedUser) initializePlanner();
