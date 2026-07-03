@@ -313,7 +313,7 @@ function render() {
 
   const warnings = [];
   if (!packages.length) {
-    warnings.push("Kontejner je prĂˇzdnĂ˝. PĹ™idejte prvnĂ­ obal tlaÄŤĂ­tkem plus.");
+    warnings.push("Kontejner je prázdný. Přidejte první obal tlačítkem plus.");
   } else if (state.distributionMode === "percent" && Math.abs(totalShare - 100) > 0.05) {
     warnings.push(`Součet podílů je ${shareLabel}; výpočet ho přepočítává poměrem na 100 %.`);
   }

@@ -43,7 +43,7 @@ function loadScript(src) {
 
 function loadPlannerScripts() {
   if (!plannerScriptsPromise) {
-    plannerScriptsPromise = loadScript("three.global.js?v=2").then(() => loadScript("app.js?v=53"));
+    plannerScriptsPromise = loadScript("three.global.js?v=2").then(() => loadScript("app.js?v=54"));
   }
   return plannerScriptsPromise;
 }
