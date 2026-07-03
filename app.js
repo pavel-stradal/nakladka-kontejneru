@@ -2,20 +2,28 @@ const THREE = window.THREE;
 
 const colors = ["#00a878", "#ff5a00", "#2563eb", "#d81b60", "#7cb518", "#7c3aed", "#eab308", "#dc2626"];
 const catalogStorageKey = "container-package-catalog-v1";
-const layoutStorageKey = "container-active-layout-v2";
+const layoutStorageKey = "container-active-layout-v3";
 const defaultPackageCatalog = [
   { id: "crate-a", name: "330ml chubby", length: 0.41, width: 0.271, height: 0.118 },
-  { id: "carton-b", name: "Karton B", length: 0.5, width: 0.35, height: 0.28 },
-  { id: "box-c", name: "Box C", length: 0.8, width: 0.6, height: 0.45 },
-  { id: "package-default-2", name: "Obal 2", length: 0.4, width: 0.3, height: 0.25 },
+  { id: "package-500ml-standard", name: "500 ml", length: 0.41, width: 0.271, height: 0.171 },
+  { id: "package-250ml-slim", name: "250 ml", length: 0.332, width: 0.219, height: 0.137 },
 ];
 
 function createDefaultPackages(catalog) {
-  return catalog.slice(0, 4).map((item, index) => ({
+  return catalog.slice(0, 3).map((item, index) => ({
     ...item,
     catalogId: item.id,
     share: index === 0 ? 100 : 0,
     pieces: index === 0 ? 2380 : 0,
+  }));
+}
+
+function createEmptyDefaultPackages(catalog) {
+  return catalog.slice(0, 3).map((item) => ({
+    ...item,
+    catalogId: item.id,
+    share: 0,
+    pieces: 0,
   }));
 }
 
@@ -101,7 +109,7 @@ const state = {
     height: Math.max(0.1, Math.min(100, Number(savedLayout?.container?.height) || 2.39)),
   },
   catalog: initialCatalog,
-  packages: recoveredSavedPackages?.length ? recoveredSavedPackages : [],
+  packages: recoveredSavedPackages?.length ? recoveredSavedPackages : createEmptyDefaultPackages(initialCatalog),
 };
 
 const els = {
@@ -288,7 +296,7 @@ function normalizedPackages() {
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   return state.packages.map((pkg, index) => ({
     ...pkg,
-    normalizedShare: total > 0 ? (weights[index] / total) * 100 : 100 / state.packages.length,
+    normalizedShare: total > 0 ? (weights[index] / total) * 100 : 0,
   }));
 }
 
@@ -312,13 +320,13 @@ function render() {
   els.meterBar.style.width = `${Math.max(0, Math.min(100, actualFill))}%`;
 
   const warnings = [];
-  if (!packages.length) {
-    warnings.push("Kontejner je prázdný. Přidejte první obal tlačítkem plus.");
+  const hasEnteredLoad = state.distributionMode === "pieces" ? totalPieces > 0 : totalShare > 0;
+  if (!packages.length || !hasEnteredLoad) {
+    warnings.push(packages.length
+      ? "Kontejner je prázdný. Nastavte podíl nebo počet kusů a potvrďte přepočet."
+      : "Kontejner je prázdný. Přidejte první obal tlačítkem plus.");
   } else if (state.distributionMode === "percent" && Math.abs(totalShare - 100) > 0.05) {
     warnings.push(`Součet podílů je ${shareLabel}; výpočet ho přepočítává poměrem na 100 %.`);
-  }
-  if (state.distributionMode === "pieces" && totalPieces <= 0) {
-    warnings.push("Zadejte alespoň jeden kus. Poměr kusů se přepočítá na celý objem kontejneru.");
   }
   if (hasInvalidPackage) {
     warnings.push("Některý obal má nulový rozměr, proto u něj nelze spočítat kusy.");
@@ -923,7 +931,7 @@ function buildPackingPlan(packages, dimensions) {
   const cacheKey = JSON.stringify({ packages, dimensions });
   if (packingCache.key === cacheKey && packingCache.plan) return packingCache.plan;
 
-  if (!packages.length) {
+  if (!packages.length || packages.every((pkg) => pkg.normalizedShare <= 1e-9)) {
     const plan = {
       placements: [],
       layers: [],
@@ -931,11 +939,11 @@ function buildPackingPlan(packages, dimensions) {
       containerLength: dimensions.length,
       targetCount: 0,
       overlapCount: 0,
-      actualShares: [],
+      actualShares: packages.map(() => 0),
       maxShareDeviation: 0,
       limited: false,
       packedPercent: 0,
-      actualCounts: [],
+      actualCounts: packages.map(() => 0),
       totalPackedPieces: 0,
     };
     packingCache = { key: cacheKey, plan };

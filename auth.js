@@ -36,24 +36,55 @@ function loadScript(src) {
     const script = document.createElement("script");
     script.src = src;
     script.onload = resolve;
-    script.onerror = () => reject(new Error("Aplikaci se nepodařilo načíst."));
+    script.onerror = () => {
+      script.remove();
+      reject(new Error("Aplikaci se nepodařilo načíst. Zkontrolujte připojení a zkuste to znovu."));
+    };
     document.body.appendChild(script);
   });
 }
 
 function loadPlannerScripts() {
   if (!plannerScriptsPromise) {
-    plannerScriptsPromise = loadScript("three.global.js?v=2").then(() => loadScript("app.js?v=54"));
+    const loadThree = window.THREE ? Promise.resolve() : loadScript("three.global.js?v=2");
+    plannerScriptsPromise = loadThree
+      .then(() => loadScript("app.js?v=55"))
+      .catch((error) => {
+        plannerScriptsPromise = null;
+        throw error;
+      });
   }
   return plannerScriptsPromise;
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const requestOptions = {
     credentials: "same-origin",
     ...options,
     headers: options.body ? { "Content-Type": "application/json", ...(options.headers || {}) } : options.headers,
-  });
+  };
+  const retryable = path === "/api/auth/login" || path === "/api/auth/me" || path === "/api/auth/logout";
+  const attempts = retryable ? 3 : 1;
+  let response;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      response = await fetch(path, requestOptions);
+    } catch {
+      if (attempt === attempts - 1) {
+        throw new Error("Spojení s přihlašovací službou se nezdařilo. Obnovte stránku a zkuste to znovu.");
+      }
+      await delay(350 * (attempt + 1));
+      continue;
+    }
+    if (response.status < 500 || attempt === attempts - 1) break;
+    await delay(350 * (attempt + 1));
+  }
+
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Požadavek se nepodařilo dokončit.");
   return data;
@@ -92,10 +123,15 @@ function showAnonymous(view = "login") {
 async function showAuthenticated(user) {
   currentUser = user;
   window.__authenticatedUser = user;
-  document.body.dataset.authState = "authenticated";
   authEls.userName.textContent = user.name;
   authEls.openAdmin.hidden = user.role !== "admin";
+  document.body.dataset.authState = "loading";
+  authEls.panel.hidden = true;
+  authEls.loading.hidden = false;
+  authEls.loading.textContent = "Načítám plánovač…";
   await loadPlannerScripts();
+  authEls.loading.hidden = true;
+  document.body.dataset.authState = "authenticated";
   window.dispatchEvent(new CustomEvent("planner-authenticated", { detail: user }));
 }
 
@@ -114,6 +150,7 @@ authEls.loginForm.addEventListener("submit", async (event) => {
     authEls.loginPassword.value = "";
     await showAuthenticated(result.user);
   } catch (error) {
+    showAnonymous("login");
     showMessage(authEls.message, error.message);
   } finally {
     setBusy(authEls.loginForm, false);
