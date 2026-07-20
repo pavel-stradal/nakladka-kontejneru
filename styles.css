@@ -119,6 +119,20 @@ body[data-auth-state="authenticated"] .auth-shell {
   font-size: 1.45rem;
 }
 
+.remember-login {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.remember-login input {
+  width: 18px;
+  min-height: 18px;
+}
+
 .primary-command,
 .secondary-command,
 .account-tools button,

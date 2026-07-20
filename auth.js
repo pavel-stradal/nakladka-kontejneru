@@ -9,6 +9,7 @@ const authEls = {
   setupForm: document.querySelector("#setupAdminForm"),
   loginEmail: document.querySelector("#loginEmail"),
   loginPassword: document.querySelector("#loginPassword"),
+  rememberLogin: document.querySelector("#rememberLogin"),
   registerName: document.querySelector("#registerName"),
   registerEmail: document.querySelector("#registerEmail"),
   registerPassword: document.querySelector("#registerPassword"),
@@ -144,7 +145,11 @@ authEls.loginForm.addEventListener("submit", async (event) => {
   try {
     await api("/api/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email: authEls.loginEmail.value, password: authEls.loginPassword.value }),
+      body: JSON.stringify({
+        email: authEls.loginEmail.value,
+        password: authEls.loginPassword.value,
+        remember: authEls.rememberLogin.checked,
+      }),
     });
     const result = await api("/api/auth/me");
     authEls.loginPassword.value = "";

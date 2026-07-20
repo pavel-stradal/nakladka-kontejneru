@@ -5,6 +5,7 @@ export async function onRequestPost({ request, env }) {
   const body = await readJson(request);
   const email = normalizeEmail(body?.email);
   const password = typeof body?.password === "string" ? body.password : "";
+  const remember = body?.remember === true;
   if (!email || !password) return json({ error: "Zadejte e-mail a heslo." }, 400);
 
   const user = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(email).first();
@@ -26,6 +27,6 @@ export async function onRequestPost({ request, env }) {
   const loggedAt = nowIso();
   await env.DB.prepare("UPDATE users SET failed_logins = 0, locked_until = 0, last_login_at = ? WHERE id = ?")
     .bind(loggedAt, user.id).run();
-  const cookie = await createSession(request, env, user.id);
+  const cookie = await createSession(request, env, user.id, remember);
   return json({ ok: true }, 200, { "Set-Cookie": cookie });
 }

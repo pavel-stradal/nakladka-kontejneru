@@ -1,6 +1,7 @@
 const encoder = new TextEncoder();
 const SESSION_COOKIE = "container_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 7;
+const REMEMBER_SESSION_SECONDS = 60 * 60 * 24 * 180;
 const PBKDF2_ITERATIONS = 100000;
 
 function bytesToBase64(bytes) {
@@ -116,17 +117,18 @@ export function publicUser(user) {
   };
 }
 
-export async function createSession(request, env, userId) {
+export async function createSession(request, env, userId, remember = false) {
   const token = randomBase64(32).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
   const tokenHash = await sha256Base64(token);
   const now = Math.floor(Date.now() / 1000);
+  const sessionSeconds = remember ? REMEMBER_SESSION_SECONDS : SESSION_SECONDS;
   await env.DB.batch([
     env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now),
     env.DB.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
-      .bind(tokenHash, userId, now, now + SESSION_SECONDS),
+      .bind(tokenHash, userId, now, now + sessionSeconds),
   ]);
   const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
-  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly${secure}; SameSite=Strict; Max-Age=${SESSION_SECONDS}`;
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly${secure}; SameSite=Strict; Max-Age=${sessionSeconds}`;
 }
 
 export async function clearSession(request, env) {
