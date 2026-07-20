@@ -28,6 +28,15 @@ const authEls = {
   adminMessage: document.querySelector("#adminMessage"),
 };
 
+const publicAppUrl = "https://nakladka-kontejneru.pages.dev/";
+if (window.location.protocol === "file:") {
+  authEls.loading.hidden = false;
+  authEls.panel.hidden = true;
+  authEls.loading.textContent = "Otevírám veřejnou verzi aplikace s přihlášením...";
+  window.location.replace(publicAppUrl);
+  throw new Error("Redirecting to public app.");
+}
+
 let currentUser = null;
 let setupKey = "";
 let plannerScriptsPromise = null;
