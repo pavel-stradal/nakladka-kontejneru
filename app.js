@@ -3,6 +3,7 @@ const THREE = window.THREE;
 const colors = ["#00a878", "#ff5a00", "#2563eb", "#d81b60", "#7cb518", "#7c3aed", "#eab308", "#dc2626"];
 const catalogStorageKey = "container-package-catalog-v1";
 const layoutStorageKey = "container-active-layout-v3";
+const manualStepDefaultMm = 10;
 const defaultPackageCatalog = [
   { id: "crate-a", name: "330ml chubby", length: 0.41, width: 0.271, height: 0.118 },
   { id: "package-500ml-standard", name: "500 ml", length: 0.41, width: 0.271, height: 0.171 },
@@ -61,10 +62,31 @@ function saveActiveLayout() {
       distributionMode: state.distributionMode,
       container: state.container,
       packages: state.packages,
+      currentJobId: state.currentJobId,
+      currentJobName: state.currentJobName,
+      manualPlan: state.manualPlan,
     }));
   } catch (error) {
     console.warn("Aktivní rozložení se nepodařilo uložit.", error);
   }
+}
+
+async function appApi(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  const response = await fetch(path, {
+    ...options,
+    headers,
+    credentials: "same-origin",
+  });
+  let result = null;
+  try {
+    result = await response.json();
+  } catch {
+    result = null;
+  }
+  if (!response.ok) throw new Error(result?.error || "Požadavek se nepodařilo dokončit.");
+  return result;
 }
 
 const accidentalTestCatalogIds = new Set(["package-1782971038302-a6kypc"]);
@@ -110,6 +132,13 @@ const state = {
   },
   catalog: initialCatalog,
   packages: recoveredSavedPackages?.length ? recoveredSavedPackages : createEmptyDefaultPackages(initialCatalog),
+  jobs: [],
+  jobsLoaded: false,
+  currentJobId: typeof savedLayout?.currentJobId === "string" ? savedLayout.currentJobId : "",
+  currentJobName: typeof savedLayout?.currentJobName === "string" ? savedLayout.currentJobName : "",
+  manualPlan: savedLayout?.manualPlan && typeof savedLayout.manualPlan === "object" ? savedLayout.manualPlan : null,
+  selectedPlacementIndex: null,
+  manualMessage: "",
 };
 
 const els = {
@@ -127,6 +156,12 @@ const els = {
   normalizeShares: document.querySelector("#normalizeShares"),
   resetDemo: document.querySelector("#resetDemo"),
   warning: document.querySelector("#warning"),
+  jobName: document.querySelector("#jobName"),
+  jobSelect: document.querySelector("#jobSelect"),
+  saveJob: document.querySelector("#saveJob"),
+  loadJob: document.querySelector("#loadJob"),
+  deleteJob: document.querySelector("#deleteJob"),
+  jobStatus: document.querySelector("#jobStatus"),
   visualArea: document.querySelector(".visual-area"),
   viewTabs: document.querySelectorAll(".view-tab"),
   zoomOut: document.querySelector("#zoomOut"),
@@ -147,6 +182,17 @@ const els = {
   nextDepth: document.querySelector("#nextDepth"),
   depthLabel: document.querySelector("#depthLabel"),
   placementDetail: document.querySelector("#placementDetail"),
+  manualSelectStep: document.querySelector("#manualSelectStep"),
+  manualRotate: document.querySelector("#manualRotate"),
+  manualLeft: document.querySelector("#manualLeft"),
+  manualRight: document.querySelector("#manualRight"),
+  manualUp: document.querySelector("#manualUp"),
+  manualDown: document.querySelector("#manualDown"),
+  manualRear: document.querySelector("#manualRear"),
+  manualDoor: document.querySelector("#manualDoor"),
+  manualReset: document.querySelector("#manualReset"),
+  manualStep: document.querySelector("#manualStep"),
+  manualStatus: document.querySelector("#manualStatus"),
   canvas3d: document.querySelector("#container3d"),
   wall2d: document.querySelector("#wall2d"),
   threeFallback: document.querySelector("#threeFallback"),
@@ -156,6 +202,10 @@ const els = {
   summaryVolume: document.querySelector("#summaryVolume"),
   summaryFill: document.querySelector("#summaryFill"),
   summaryTypes: document.querySelector("#summaryTypes"),
+  stabilityScore: document.querySelector("#stabilityScore"),
+  stabilityLabel: document.querySelector("#stabilityLabel"),
+  stabilityMeter: document.querySelector("#stabilityMeter"),
+  stabilityDetails: document.querySelector("#stabilityDetails"),
   resultRows: document.querySelector("#resultRows"),
 };
 
@@ -184,6 +234,7 @@ const packingView = {
 };
 
 let packingCache = { key: "", plan: null };
+let latestPacking = null;
 
 function numberValue(input, fallback = 0) {
   const value = Number.parseFloat(input.value);
@@ -205,7 +256,196 @@ function containerVolume() {
   return Math.max(0, state.container.length) * Math.max(0, state.container.width) * Math.max(0, state.container.height);
 }
 
+function layoutSignature(packages = state.packages, dimensions = state.container) {
+  return JSON.stringify({
+    distributionMode: state.distributionMode,
+    container: {
+      length: Number(dimensions.length).toFixed(4),
+      width: Number(dimensions.width).toFixed(4),
+      height: Number(dimensions.height).toFixed(4),
+    },
+    packages: packages.map((pkg) => ({
+      name: pkg.name,
+      length: Number(pkg.length).toFixed(4),
+      width: Number(pkg.width).toFixed(4),
+      height: Number(pkg.height).toFixed(4),
+      share: Number(pkg.share || 0).toFixed(3),
+      pieces: Number(pkg.pieces || 0).toFixed(0),
+    })),
+  });
+}
+
+function clonePlacement(placement, index = null) {
+  return {
+    packageIndex: Math.max(0, Number(placement.packageIndex) || 0),
+    length: Math.max(0, Number(placement.length) || 0),
+    height: Math.max(0, Number(placement.height) || 0),
+    width: Math.max(0, Number(placement.width) || 0),
+    rotated: Boolean(placement.rotated),
+    x: Math.max(0, Number(placement.x) || 0),
+    y: Math.max(0, Number(placement.y) || 0),
+    z: Math.max(0, Number(placement.z) || 0),
+    manualIndex: index,
+  };
+}
+
+function groupPlacementsIntoLayers(placements, packages, dimensions) {
+  const validSizes = packages.flatMap((pkg) => [pkg.length, pkg.width]).filter((size) => size > 0);
+  const wallDepth = validSizes.length ? Math.max(0.1, Math.min(...validSizes)) : 0.1;
+  const rearDistance = (placement) => dimensions.length - placement.x - placement.length;
+  const wallGroups = new Map();
+  placements.forEach((placement) => {
+    const wallIndex = Math.floor((rearDistance(placement) + 1e-7) / wallDepth);
+    if (!wallGroups.has(wallIndex)) wallGroups.set(wallIndex, []);
+    wallGroups.get(wallIndex).push(placement);
+  });
+  return {
+    wallDepth,
+    layers: [...wallGroups.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, items]) => items.sort((a, b) =>
+        rearDistance(a) - rearDistance(b) || a.y - b.y || a.z - b.z || a.packageIndex - b.packageIndex
+      )),
+  };
+}
+
+function largestAxisGap(intervals, limit) {
+  if (!intervals.length) return limit;
+  const sorted = intervals
+    .map(([start, end]) => [Math.max(0, start), Math.min(limit, end)])
+    .filter(([start, end]) => end > start)
+    .sort((a, b) => a[0] - b[0]);
+  if (!sorted.length) return limit;
+  let largest = sorted[0][0];
+  let coveredEnd = sorted[0][1];
+  for (let index = 1; index < sorted.length; index += 1) {
+    largest = Math.max(largest, sorted[index][0] - coveredEnd);
+    coveredEnd = Math.max(coveredEnd, sorted[index][1]);
+  }
+  return Math.max(largest, limit - coveredEnd);
+}
+
+function summarizePacking(basePlan, placements, packages, dimensions, manualActive = false) {
+  const indexedPlacements = placements.map((placement, index) => clonePlacement(placement, index));
+  const totalVolume = dimensions.length * dimensions.width * dimensions.height;
+  const packedVolume = indexedPlacements.reduce((sum, placement) => sum + volumeOf(packages[placement.packageIndex] || {}), 0);
+  const actualCounts = packages.map((pkg, packageIndex) =>
+    indexedPlacements.reduce((count, placement) => count + (placement.packageIndex === packageIndex ? 1 : 0), 0)
+  );
+  const actualShares = packages.map((pkg, index) =>
+    packedVolume > 0 ? ((actualCounts[index] * volumeOf(pkg)) / packedVolume) * 100 : 0
+  );
+  const maxShareDeviation = actualShares.reduce((max, share, index) =>
+    Math.max(max, Math.abs(share - (packages[index]?.normalizedShare || 0))), 0
+  );
+  let overlapCount = 0;
+  for (let left = 0; left < indexedPlacements.length; left += 1) {
+    for (let right = left + 1; right < indexedPlacements.length; right += 1) {
+      if (placementsOverlap(indexedPlacements[left], indexedPlacements[right], 1e-7)) overlapCount += 1;
+    }
+  }
+  const { wallDepth, layers } = groupPlacementsIntoLayers(indexedPlacements, packages, dimensions);
+  const minZ = indexedPlacements.length ? Math.min(...indexedPlacements.map((placement) => placement.z)) : 0;
+  const maxZ = indexedPlacements.length ? Math.max(...indexedPlacements.map((placement) => placement.z + placement.width)) : 0;
+  const maxTop = indexedPlacements.length ? Math.max(...indexedPlacements.map((placement) => placement.y + placement.height)) : 0;
+  const minX = indexedPlacements.length ? Math.min(...indexedPlacements.map((placement) => placement.x)) : dimensions.length;
+  const maxFrontGap = indexedPlacements.length ? Math.max(...indexedPlacements.map((placement) => placement.x)) : dimensions.length;
+  const zGap = largestAxisGap(indexedPlacements.map((placement) => [placement.z, placement.z + placement.width]), dimensions.width);
+  const supportValues = indexedPlacements.map((placement) =>
+    supportCoverage({ x: placement.x, y: placement.y, z: placement.z }, placement, indexedPlacements.filter((item) => item !== placement), 1e-7)
+  );
+  const unsupportedCount = supportValues.filter((coverage) => coverage < 0.98).length;
+  const adjacencyChanges = indexedPlacements
+    .slice()
+    .sort((a, b) => a.z - b.z || a.x - b.x || a.y - b.y)
+    .reduce((count, placement, index, items) => {
+      if (index === 0) return 0;
+      const previous = items[index - 1];
+      return count + (previous.packageIndex !== placement.packageIndex || previous.rotated !== placement.rotated ? 1 : 0);
+    }, 0);
+
+  return {
+    ...basePlan,
+    placements: indexedPlacements,
+    layers,
+    wallDepth,
+    containerLength: dimensions.length,
+    targetCount: basePlan.targetCount || indexedPlacements.length,
+    overlapCount,
+    actualShares,
+    maxShareDeviation,
+    limited: manualActive ? false : Boolean(basePlan.limited),
+    packedPercent: totalVolume > 0 ? (packedVolume / totalVolume) * 100 : 0,
+    actualCounts,
+    totalPackedPieces: indexedPlacements.length,
+    sideGapCm: Math.max(minZ, Math.max(0, dimensions.width - maxZ)) * 100,
+    betweenColumnGapCm: zGap * 100,
+    lockPattern: adjacencyChanges > 0,
+    columnCount: basePlan.columnCount || 0,
+    topGapCm: Math.max(0, dimensions.height - maxTop) * 100,
+    minEndGapCm: minX * 100,
+    maxEndGapCm: maxFrontGap * 100,
+    unsupportedCount,
+    supportPercent: supportValues.length
+      ? (supportValues.reduce((sum, value) => sum + Math.min(1, value), 0) / supportValues.length) * 100
+      : 100,
+    manualActive,
+  };
+}
+
+function planWithManualEdits(basePlan, packages, dimensions) {
+  const signature = layoutSignature();
+  if (!state.manualPlan || state.manualPlan.signature !== signature || !Array.isArray(state.manualPlan.placements)) {
+    const summarized = summarizePacking(basePlan, basePlan.placements, packages, dimensions, false);
+    return basePlan.limited
+      ? {
+          ...summarized,
+          limited: true,
+          targetCount: basePlan.targetCount,
+          actualShares: basePlan.actualShares,
+          actualCounts: basePlan.actualCounts,
+          packedPercent: basePlan.packedPercent,
+          totalPackedPieces: basePlan.totalPackedPieces,
+        }
+      : summarized;
+  }
+  if (state.manualPlan.placements.length !== basePlan.placements.length) {
+    state.manualPlan = null;
+    state.selectedPlacementIndex = null;
+    saveActiveLayout();
+    return summarizePacking(basePlan, basePlan.placements, packages, dimensions, false);
+  }
+  return summarizePacking(basePlan, state.manualPlan.placements, packages, dimensions, true);
+}
+
+function calculateStability(packing) {
+  const sideGap = Number.isFinite(packing.sideGapCm) ? packing.sideGapCm : 999;
+  const betweenGap = Number.isFinite(packing.betweenColumnGapCm) ? packing.betweenColumnGapCm : 999;
+  const topGap = Number.isFinite(packing.topGapCm) ? packing.topGapCm : 999;
+  const supportPercent = Number.isFinite(packing.supportPercent) ? packing.supportPercent : 100;
+  const fillPenalty = Math.max(0, 98 - packing.packedPercent) * 1.2;
+  const sidePenalty = Math.max(0, sideGap - 3) * 1.8;
+  const betweenPenalty = Math.max(0, betweenGap - 2) * 1.5;
+  const topPenalty = Math.max(0, topGap - 6) * 1.4;
+  const overlapPenalty = packing.overlapCount * 12;
+  const supportPenalty = Math.max(0, 99 - supportPercent) * 2 + (packing.unsupportedCount || 0) * 4;
+  const score = Math.max(0, Math.min(100, Math.round(
+    100 - fillPenalty - sidePenalty - betweenPenalty - topPenalty - overlapPenalty - supportPenalty
+  )));
+  const label = score >= 88 ? "Velmi dobrá" : score >= 72 ? "Dobrá" : score >= 55 ? "Ke kontrole" : "Riziko pohybu";
+  const details = [
+    `bok ${fmt(sideGap, 1)} cm`,
+    `mezi sloupci ${fmt(betweenGap, 1)} cm`,
+    `strop ${fmt(topGap, 1)} cm`,
+    `podpora ${fmt(supportPercent, 0)} %`,
+  ];
+  if (packing.overlapCount) details.push(`překryvy ${packing.overlapCount}`);
+  if (packing.manualActive) details.push("ručně upraveno");
+  return { score, label, details };
+}
+
 function confirmLayout() {
+  const previousSignature = layoutSignature();
   syncStateFromDom();
   state.container = {
     length: Math.max(0.1, Math.min(100, numberValue(els.containerLength, state.container.length))),
@@ -226,6 +466,11 @@ function confirmLayout() {
       height: pkg.height,
     });
   });
+  if (previousSignature !== layoutSignature()) {
+    state.manualPlan = null;
+    state.selectedPlacementIndex = null;
+    state.manualMessage = "Automaticky přepočítáno po změně zadání.";
+  }
   savePackageCatalog(state.catalog);
   saveActiveLayout();
   els.confirmLayout.classList.remove("is-pending");
@@ -307,14 +552,20 @@ function render() {
   const dimensions = containerDimensions();
   const packages = normalizedPackages();
   const hasInvalidPackage = packages.some((pkg) => volumeOf(pkg) <= 0);
-  const packing = buildPackingPlan(packages, dimensions);
+  const packing = planWithManualEdits(buildPackingPlan(packages, dimensions), packages, dimensions);
+  latestPacking = packing;
   const actualFill = packing.packedPercent;
+  const stability = calculateStability(packing);
   const shareLabel = state.distributionMode === "pieces" ? `${fmt(totalPieces, 0)} ks` : `${fmt(totalShare, 1)} %`;
 
   els.containerVolume.textContent = `${fmt(volume, 2)} m3`;
   els.summaryVolume.textContent = `${fmt(volume, 2)} m3`;
   els.summaryFill.textContent = `${fmt(actualFill, 1)} %`;
   els.summaryTypes.textContent = String(packages.length);
+  els.stabilityScore.textContent = String(stability.score);
+  els.stabilityLabel.textContent = stability.label;
+  els.stabilityMeter.style.width = `${stability.score}%`;
+  els.stabilityDetails.textContent = stability.details.join(" · ");
   els.fillPercent.textContent = `${fmt(actualFill, 1)} %`;
   els.shareTotal.textContent = shareLabel;
   els.meterBar.style.width = `${Math.max(0, Math.min(100, actualFill))}%`;
@@ -399,6 +650,176 @@ function renderResults(packages, volume, packing) {
     `;
     els.resultRows.appendChild(row);
   });
+}
+
+function currentJobData() {
+  return {
+    version: 1,
+    distributionMode: state.distributionMode,
+    container: state.container,
+    packages: state.packages,
+    manualPlan: state.manualPlan,
+  };
+}
+
+function safeJobName() {
+  return (els.jobName.value.trim() || state.currentJobName || `Zakázka ${new Date().toLocaleDateString("cs-CZ")}`).slice(0, 80);
+}
+
+function renderJobs() {
+  if (!els.jobSelect) return;
+  els.jobName.value = state.currentJobName || "";
+  els.jobSelect.innerHTML = '<option value="">Vyber uloženou zakázku</option>';
+  state.jobs.forEach((job) => {
+    const option = document.createElement("option");
+    option.value = job.id;
+    option.textContent = job.name;
+    els.jobSelect.appendChild(option);
+  });
+  els.jobSelect.value = state.currentJobId || "";
+  els.loadJob.disabled = !els.jobSelect.value;
+  els.deleteJob.disabled = !els.jobSelect.value;
+  els.jobStatus.textContent = state.jobsLoaded
+    ? (state.currentJobName ? `Otevřená: ${state.currentJobName}` : `${state.jobs.length} uložených zakázek`)
+    : "Načítám zakázky...";
+}
+
+async function loadJobs() {
+  if (!els.jobSelect) return;
+  try {
+    const result = await appApi("/api/jobs");
+    state.jobs = Array.isArray(result.jobs) ? result.jobs : [];
+    state.jobsLoaded = true;
+    renderJobs();
+  } catch (error) {
+    state.jobsLoaded = true;
+    els.jobStatus.textContent = error.message;
+  }
+}
+
+function sanitizeLoadedPackages(packages) {
+  return Array.isArray(packages)
+    ? packages
+      .filter((pkg) => pkg && typeof pkg === "object")
+      .map((pkg, index) => ({
+        catalogId: typeof pkg.catalogId === "string" ? pkg.catalogId : null,
+        name: String(pkg.name || `Obal ${index + 1}`),
+        length: Math.max(0, Number(pkg.length) || 0),
+        width: Math.max(0, Number(pkg.width) || 0),
+        height: Math.max(0, Number(pkg.height) || 0),
+        share: Math.max(0, Number(pkg.share) || 0),
+        pieces: Math.max(0, Number(pkg.pieces) || 0),
+      }))
+    : [];
+}
+
+function mergeLoadedPackagesIntoCatalog(packages) {
+  packages.forEach((pkg) => {
+    if (!pkg.catalogId) {
+      pkg.catalogId = `package-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    const existing = state.catalog.find((item) => item.id === pkg.catalogId);
+    const data = {
+      id: pkg.catalogId,
+      name: pkg.name,
+      length: pkg.length,
+      width: pkg.width,
+      height: pkg.height,
+    };
+    if (existing) Object.assign(existing, data);
+    else state.catalog.push(data);
+  });
+  savePackageCatalog(state.catalog);
+}
+
+function applyJob(job) {
+  const data = job?.data || {};
+  const packages = sanitizeLoadedPackages(data.packages);
+  if (!packages.length) throw new Error("Zakázka nemá žádné obaly.");
+  mergeLoadedPackagesIntoCatalog(packages);
+  state.currentJobId = job.id;
+  state.currentJobName = job.name;
+  state.distributionMode = data.distributionMode === "pieces" ? "pieces" : "percent";
+  state.container = {
+    length: Math.max(0.1, Math.min(100, Number(data.container?.length) || 5.9)),
+    width: Math.max(0.1, Math.min(100, Number(data.container?.width) || 2.35)),
+    height: Math.max(0.1, Math.min(100, Number(data.container?.height) || 2.39)),
+  };
+  state.packages = packages;
+  state.manualPlan = data.manualPlan && typeof data.manualPlan === "object" ? data.manualPlan : null;
+  state.selectedPlacementIndex = null;
+  state.manualMessage = state.manualPlan ? "Načtena ruční úprava zakázky." : "";
+  packingView.mode = "all";
+  packingView.layerIndex = 0;
+  packingView.stepIndex = 0;
+  packingView.depthIndex = 0;
+  document.body.dataset.distributionMode = state.distributionMode;
+  els.modeButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.mode === state.distributionMode));
+  els.containerLength.value = state.container.length;
+  els.containerWidth.value = state.container.width;
+  els.containerHeight.value = state.container.height;
+  els.confirmLayout.classList.remove("is-pending");
+  renderPackageCards();
+  saveActiveLayout();
+  render();
+  renderJobs();
+}
+
+async function saveJob() {
+  confirmLayout();
+  const name = safeJobName();
+  els.jobStatus.textContent = "Ukládám zakázku...";
+  try {
+    const result = await appApi("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        id: state.currentJobId || undefined,
+        name,
+        data: currentJobData(),
+      }),
+    });
+    const job = result.job;
+    state.currentJobId = job.id;
+    state.currentJobName = job.name;
+    const existingIndex = state.jobs.findIndex((item) => item.id === job.id);
+    if (existingIndex >= 0) state.jobs[existingIndex] = job;
+    else state.jobs.unshift(job);
+    saveActiveLayout();
+    renderJobs();
+    els.jobStatus.textContent = `Uloženo: ${job.name}`;
+  } catch (error) {
+    els.jobStatus.textContent = error.message;
+  }
+}
+
+async function loadSelectedJob() {
+  const job = state.jobs.find((item) => item.id === els.jobSelect.value);
+  if (!job) return;
+  try {
+    applyJob(job);
+    els.jobStatus.textContent = `Načteno: ${job.name}`;
+  } catch (error) {
+    els.jobStatus.textContent = error.message;
+  }
+}
+
+async function deleteSelectedJob() {
+  const jobId = els.jobSelect.value;
+  if (!jobId) return;
+  els.jobStatus.textContent = "Mažu zakázku...";
+  try {
+    await appApi(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    state.jobs = state.jobs.filter((job) => job.id !== jobId);
+    if (state.currentJobId === jobId) {
+      state.currentJobId = "";
+      state.currentJobName = "";
+    }
+    saveActiveLayout();
+    renderJobs();
+    els.jobStatus.textContent = "Zakázka smazána.";
+  } catch (error) {
+    els.jobStatus.textContent = error.message;
+  }
 }
 
 function initThreeScene() {
@@ -1286,6 +1707,8 @@ function renderWall2d(placements, fullWall, packages, dimensions, overview = fal
     piece.style.height = `${(placement.height / dimensions.height) * 100}%`;
     piece.style.background = colors[packageIndex % colors.length];
     piece.style.zIndex = String(Math.max(1, Math.round(placement.x * 1000)));
+    piece.dataset.placementIndex = String(placement.manualIndex ?? "");
+    piece.classList.toggle("is-selected", placement.manualIndex === state.selectedPlacementIndex);
     piece.textContent = String(order);
     piece.title = `${order}. ${pkg.name}${placement.rotated ? " – otočit o 90°" : ""}`;
     piece.setAttribute("aria-label", piece.title);
@@ -1308,6 +1731,145 @@ function wallDepthSlices(placements, dimensions) {
       distance,
       placements: items.sort((a, b) => a.y - b.y || a.z - b.z || a.packageIndex - b.packageIndex),
     }));
+}
+
+function manualStepMeters() {
+  return Math.max(1, Math.min(500, numberValue(els.manualStep, manualStepDefaultMm))) / 1000;
+}
+
+function currentLayerPlacement() {
+  if (!latestPacking) return null;
+  const layer = latestPacking.layers[packingView.layerIndex] || [];
+  return layer[packingView.stepIndex] || null;
+}
+
+function ensureManualPlan() {
+  if (!latestPacking || !latestPacking.placements.length || latestPacking.limited) {
+    state.manualMessage = latestPacking?.limited
+      ? "Ruční úprava není dostupná u zkráceného náhledu."
+      : "Nejdříve musí být v kontejneru aspoň jeden kus.";
+    updateManualControls();
+    return false;
+  }
+  const signature = layoutSignature();
+  if (!state.manualPlan || state.manualPlan.signature !== signature) {
+    state.manualPlan = {
+      signature,
+      placements: latestPacking.placements.map((placement) => clonePlacement(placement)),
+    };
+  }
+  return true;
+}
+
+function updateManualControls() {
+  if (!els.manualStatus) return;
+  const hasSelection = Number.isInteger(state.selectedPlacementIndex) && latestPacking?.placements[state.selectedPlacementIndex];
+  const manualActive = Boolean(state.manualPlan && state.manualPlan.signature === layoutSignature());
+  [
+    els.manualRotate,
+    els.manualLeft,
+    els.manualRight,
+    els.manualUp,
+    els.manualDown,
+    els.manualRear,
+    els.manualDoor,
+  ].forEach((button) => {
+    button.disabled = !hasSelection;
+  });
+  els.manualReset.disabled = !manualActive;
+  els.manualStatus.textContent = state.manualMessage || (hasSelection
+    ? `Vybrán kus ${state.selectedPlacementIndex + 1}.`
+    : "Klikni na kus ve 2D stěně nebo vyber aktuální krok.");
+}
+
+function selectPlacement(index) {
+  if (!latestPacking || !latestPacking.placements[index]) return;
+  state.selectedPlacementIndex = index;
+  state.manualMessage = `Vybrán kus ${index + 1}.`;
+  updateManualControls();
+  renderThreeScene(normalizedPackages(), containerDimensions(), latestPacking);
+}
+
+function placementFits(candidate, placements, dimensions, selectedIndex) {
+  const epsilon = 1e-7;
+  if (
+    candidate.x < -epsilon ||
+    candidate.y < -epsilon ||
+    candidate.z < -epsilon ||
+    candidate.x + candidate.length > dimensions.length + epsilon ||
+    candidate.y + candidate.height > dimensions.height + epsilon ||
+    candidate.z + candidate.width > dimensions.width + epsilon
+  ) {
+    return "Kus by byl mimo kontejner.";
+  }
+  const overlap = placements.some((placement, index) =>
+    index !== selectedIndex && placementsOverlap(candidate, placement, epsilon)
+  );
+  if (overlap) return "Kus by se překrýval s jiným obalem.";
+  if (supportCoverage({ x: candidate.x, y: candidate.y, z: candidate.z }, candidate, placements.filter((_, index) => index !== selectedIndex), epsilon) < 0.98) {
+    return "Kus by neměl dostatečnou podporu zespodu.";
+  }
+  return "";
+}
+
+function tryUpdateSelectedPlacement(candidate) {
+  if (!ensureManualPlan()) return;
+  const index = state.selectedPlacementIndex;
+  if (!Number.isInteger(index) || !state.manualPlan.placements[index]) return;
+  const dimensions = containerDimensions();
+  const placements = state.manualPlan.placements.map((placement) => clonePlacement(placement));
+  const error = placementFits(candidate, placements, dimensions, index);
+  if (error) {
+    state.manualMessage = error;
+    updateManualControls();
+    return;
+  }
+  state.manualPlan.placements[index] = clonePlacement(candidate);
+  state.manualMessage = "Ruční úprava uložena v aktuálním plánu.";
+  saveActiveLayout();
+  render();
+}
+
+function moveSelectedPlacement(dx, dy, dz) {
+  if (!ensureManualPlan()) return;
+  const index = state.selectedPlacementIndex;
+  const placement = state.manualPlan.placements[index];
+  if (!placement) return;
+  tryUpdateSelectedPlacement({
+    ...placement,
+    x: placement.x + dx,
+    y: placement.y + dy,
+    z: placement.z + dz,
+  });
+}
+
+function rotateSelectedPlacement() {
+  if (!ensureManualPlan()) return;
+  const index = state.selectedPlacementIndex;
+  const placement = state.manualPlan.placements[index];
+  if (!placement) return;
+  const centerX = placement.x + placement.length / 2;
+  const centerZ = placement.z + placement.width / 2;
+  const rotated = {
+    ...placement,
+    length: placement.width,
+    width: placement.length,
+    rotated: !placement.rotated,
+  };
+  rotated.x = centerX - rotated.length / 2;
+  rotated.z = centerZ - rotated.width / 2;
+  const dimensions = containerDimensions();
+  rotated.x = Math.max(0, Math.min(dimensions.length - rotated.length, rotated.x));
+  rotated.z = Math.max(0, Math.min(dimensions.width - rotated.width, rotated.z));
+  tryUpdateSelectedPlacement(rotated);
+}
+
+function resetManualPlan() {
+  state.manualPlan = null;
+  state.selectedPlacementIndex = null;
+  state.manualMessage = "Ruční úpravy jsou zrušené, platí automatický výpočet.";
+  saveActiveLayout();
+  render();
 }
 
 function renderThreeScene(packages, dimensions, packing = buildPackingPlan(packages, dimensions)) {
@@ -1415,6 +1977,27 @@ function renderThreeScene(packages, dimensions, packing = buildPackingPlan(packa
     threeState.fillGroup.add(boxes);
   });
 
+  const selectedPlacement = Number.isInteger(state.selectedPlacementIndex)
+    ? visiblePlacements.find((placement) => placement.manualIndex === state.selectedPlacementIndex)
+    : null;
+  if (selectedPlacement) {
+    const highlightGeometry = new THREE.BoxGeometry(
+      selectedPlacement.length * scale * 1.025,
+      selectedPlacement.height * scale * 1.025,
+      selectedPlacement.width * scale * 1.025
+    );
+    const highlight = new THREE.LineSegments(
+      new THREE.EdgesGeometry(highlightGeometry),
+      new THREE.LineBasicMaterial({ color: 0xfff200, transparent: true, opacity: 1 })
+    );
+    highlight.position.set(
+      (selectedPlacement.x + selectedPlacement.length / 2 - dimensions.length / 2) * scale,
+      (selectedPlacement.y + selectedPlacement.height / 2 - dimensions.height / 2) * scale,
+      (selectedPlacement.z + selectedPlacement.width / 2 - dimensions.width / 2) * scale
+    );
+    threeState.edgesGroup.add(highlight);
+  }
+
   els.visualArea.dataset.visiblePackages = String(visiblePlacements.length);
   els.visualArea.dataset.packedPackages = String(packing.totalPackedPieces);
   els.visualArea.dataset.targetPackages = String(packing.targetCount);
@@ -1427,6 +2010,8 @@ function renderThreeScene(packages, dimensions, packing = buildPackingPlan(packa
   els.visualArea.dataset.topGapCm = Number.isFinite(packing.topGapCm) ? packing.topGapCm.toFixed(1) : "";
   els.visualArea.dataset.minEndGapCm = Number.isFinite(packing.minEndGapCm) ? packing.minEndGapCm.toFixed(1) : "";
   els.visualArea.dataset.maxEndGapCm = Number.isFinite(packing.maxEndGapCm) ? packing.maxEndGapCm.toFixed(1) : "";
+  els.visualArea.dataset.manualActive = packing.manualActive ? "true" : "false";
+  updateManualControls();
 
   drawThreeScene();
 }
@@ -1491,6 +2076,11 @@ function resetDemo() {
   packingView.layerIndex = 0;
   packingView.stepIndex = 0;
   packingView.depthIndex = 0;
+  state.manualPlan = null;
+  state.selectedPlacementIndex = null;
+  state.manualMessage = "";
+  state.currentJobId = "";
+  state.currentJobName = "";
   state.packages = createDefaultPackages(state.catalog);
   document.body.dataset.distributionMode = state.distributionMode;
   els.modeButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.mode === state.distributionMode));
@@ -1544,6 +2134,28 @@ els.addPackage.addEventListener("click", () => {
 els.confirmLayout.addEventListener("click", confirmLayout);
 els.normalizeShares.addEventListener("click", normalizeShares);
 els.resetDemo.addEventListener("click", resetDemo);
+els.saveJob.addEventListener("click", saveJob);
+els.loadJob.addEventListener("click", loadSelectedJob);
+els.deleteJob.addEventListener("click", deleteSelectedJob);
+els.jobSelect.addEventListener("change", renderJobs);
+els.manualSelectStep.addEventListener("click", () => {
+  const placement = currentLayerPlacement();
+  if (placement) selectPlacement(placement.manualIndex);
+});
+els.manualRotate.addEventListener("click", rotateSelectedPlacement);
+els.manualLeft.addEventListener("click", () => moveSelectedPlacement(0, 0, -manualStepMeters()));
+els.manualRight.addEventListener("click", () => moveSelectedPlacement(0, 0, manualStepMeters()));
+els.manualUp.addEventListener("click", () => moveSelectedPlacement(0, manualStepMeters(), 0));
+els.manualDown.addEventListener("click", () => moveSelectedPlacement(0, -manualStepMeters(), 0));
+els.manualRear.addEventListener("click", () => moveSelectedPlacement(manualStepMeters(), 0, 0));
+els.manualDoor.addEventListener("click", () => moveSelectedPlacement(-manualStepMeters(), 0, 0));
+els.manualReset.addEventListener("click", resetManualPlan);
+els.wall2d.addEventListener("click", (event) => {
+  const piece = event.target.closest(".wall-piece");
+  if (!piece) return;
+  const index = Number.parseInt(piece.dataset.placementIndex, 10);
+  if (Number.isInteger(index)) selectPlacement(index);
+});
 els.zoomOut.addEventListener("click", () => {
   threeState.zoom = Math.max(0.65, threeState.zoom / 1.18);
   drawThreeScene();
@@ -1640,9 +2252,12 @@ function initializePlanner() {
   els.containerLength.value = state.container.length;
   els.containerWidth.value = state.container.width;
   els.containerHeight.value = state.container.height;
+  els.manualStep.value = manualStepDefaultMm;
   els.modeButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.mode === state.distributionMode));
   renderPackageCards();
+  renderJobs();
   render();
+  loadJobs();
   if (needsCatalogRecovery) saveActiveLayout();
 }
 

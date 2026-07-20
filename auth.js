@@ -48,7 +48,7 @@ function loadPlannerScripts() {
   if (!plannerScriptsPromise) {
     const loadThree = window.THREE ? Promise.resolve() : loadScript("three.global.js?v=2");
     plannerScriptsPromise = loadThree
-      .then(() => loadScript("app.js?v=55"))
+      .then(() => loadScript("app.js?v=56"))
       .catch((error) => {
         plannerScriptsPromise = null;
         throw error;

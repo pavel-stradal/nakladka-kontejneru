@@ -119,6 +119,27 @@
               <button class="mode-button" type="button" data-mode="pieces">Kusy</button>
             </div>
 
+            <div class="section-title jobs-title">
+              <h2>Zakázky</h2>
+              <span id="jobStatus">Načítám...</span>
+            </div>
+
+            <div class="job-tools" aria-label="Uložené zakázky">
+              <label>
+                Název zakázky
+                <input id="jobName" type="text" maxlength="80" placeholder="Například Zakázka 07/2026" />
+              </label>
+              <button id="saveJob" type="button">Uložit</button>
+              <label>
+                Uložené zakázky
+                <select id="jobSelect"></select>
+              </label>
+              <div class="job-actions">
+                <button id="loadJob" type="button">Načíst</button>
+                <button id="deleteJob" type="button" class="secondary">Smazat</button>
+              </div>
+            </div>
+
             <div class="section-title packages-title">
               <h2>Druhy obalů</h2>
               <button id="addPackage" class="icon-button" type="button" aria-label="Přidat obal" title="Přidat obal">+</button>
@@ -167,6 +188,22 @@
                 <button id="nextDepth" class="icon-button" type="button" aria-label="Další hloubkový řez" title="Další hloubkový řez">›</button>
               </div>
               <p id="placementDetail" class="placement-detail"></p>
+              <div class="manual-tools" aria-label="Ruční úprava rozložení">
+                <button id="manualSelectStep" type="button">Vybrat krok</button>
+                <button id="manualRotate" type="button">Otočit 90°</button>
+                <button id="manualLeft" type="button">Vlevo</button>
+                <button id="manualRight" type="button">Vpravo</button>
+                <button id="manualUp" type="button">Nahoru</button>
+                <button id="manualDown" type="button">Dolu</button>
+                <button id="manualRear" type="button">K zadní stěně</button>
+                <button id="manualDoor" type="button">Ke dveřím</button>
+                <label>
+                  Krok (mm)
+                  <input id="manualStep" type="number" min="1" max="500" step="1" value="10" />
+                </label>
+                <button id="manualReset" type="button" class="secondary">Zrušit ruční úpravy</button>
+                <span id="manualStatus">Klikni na kus ve 2D stěně.</span>
+              </div>
             </div>
             <div class="three-view" data-active-view="three">
               <canvas id="container3d" aria-label="3D zobrazeni kontejneru"></canvas>
@@ -198,6 +235,15 @@
                 <span>Druhů obalů</span>
                 <strong id="summaryTypes">0</strong>
               </div>
+            </div>
+
+            <div class="stability-card" aria-label="Skóre stability">
+              <div class="stability-head">
+                <span>Stabilita nákladu</span>
+                <strong><span id="stabilityScore">0</span>/100</strong>
+              </div>
+              <div class="stability-track"><div id="stabilityMeter" class="stability-meter"></div></div>
+              <p><strong id="stabilityLabel">Bez dat</strong><span id="stabilityDetails"></span></p>
             </div>
 
             <div class="table-wrap">
@@ -267,6 +313,6 @@
       </article>
     </template>
 
-    <script src="auth.js?v=4"></script>
+    <script src="auth.js?v=5"></script>
   </body>
 </html>
