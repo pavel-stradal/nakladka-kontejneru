@@ -184,6 +184,7 @@ const els = {
   placementDetail: document.querySelector("#placementDetail"),
   manualSelectStep: document.querySelector("#manualSelectStep"),
   manualRotate: document.querySelector("#manualRotate"),
+  manualAlign: document.querySelector("#manualAlign"),
   manualLeft: document.querySelector("#manualLeft"),
   manualRight: document.querySelector("#manualRight"),
   manualUp: document.querySelector("#manualUp"),
@@ -1798,6 +1799,7 @@ function updateManualControls() {
   const selectedPlacement = hasSelection ? latestPacking.placements[state.selectedPlacementIndex] : null;
   [
     els.manualRotate,
+    els.manualAlign,
     els.manualLeft,
     els.manualRight,
     els.manualUp,
@@ -1845,7 +1847,86 @@ function placementFits(candidate, placements, dimensions, selectedIndex) {
   return "";
 }
 
-function tryUpdateSelectedPlacement(candidate) {
+function overlapVolume(a, b) {
+  const x = Math.max(0, Math.min(a.x + a.length, b.x + b.length) - Math.max(a.x, b.x));
+  const y = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  const z = Math.max(0, Math.min(a.z + a.width, b.z + b.width) - Math.max(a.z, b.z));
+  return x * y * z;
+}
+
+function placementOverlapVolume(candidate, placements, selectedIndex) {
+  return placements.reduce((sum, placement, index) =>
+    index === selectedIndex ? sum : sum + overlapVolume(candidate, placement), 0
+  );
+}
+
+function clampPlacement(candidate, dimensions) {
+  return {
+    ...candidate,
+    x: Math.max(0, Math.min(Math.max(0, dimensions.length - candidate.length), candidate.x)),
+    y: Math.max(0, Math.min(Math.max(0, dimensions.height - candidate.height), candidate.y)),
+    z: Math.max(0, Math.min(Math.max(0, dimensions.width - candidate.width), candidate.z)),
+  };
+}
+
+function nearestSnapValues(values, desired, maxItems) {
+  const unique = [...new Set(values
+    .filter((value) => Number.isFinite(value))
+    .map((value) => Math.round(value * 10000) / 10000))]
+    .sort((a, b) => Math.abs(a - desired) - Math.abs(b - desired) || a - b)
+    .slice(0, maxItems);
+  return unique.length ? unique : [desired];
+}
+
+function axisSnapValues(axis, sizeKey, candidate, current, placements, dimensions, selectedIndex, maxItems) {
+  const limit = axis === "x" ? dimensions.length : axis === "y" ? dimensions.height : dimensions.width;
+  const size = candidate[sizeKey];
+  const desired = candidate[axis];
+  const values = [desired, current[axis], 0, limit - size];
+  placements.forEach((placement, index) => {
+    if (index === selectedIndex) return;
+    const placementSize = placement[sizeKey];
+    values.push(
+      placement[axis],
+      placement[axis] + placementSize,
+      placement[axis] - size,
+      placement[axis] + placementSize - size
+    );
+  });
+  return nearestSnapValues(values.map((value) => Math.max(0, Math.min(Math.max(0, limit - size), value))), desired, maxItems);
+}
+
+function bestManualCandidate(baseCandidate, current, placements, dimensions, selectedIndex) {
+  const candidate = clampPlacement(baseCandidate, dimensions);
+  const xValues = axisSnapValues("x", "length", candidate, current, placements, dimensions, selectedIndex, 12);
+  const yValues = axisSnapValues("y", "height", candidate, current, placements, dimensions, selectedIndex, 8);
+  const zValues = axisSnapValues("z", "width", candidate, current, placements, dimensions, selectedIndex, 12);
+  let best = null;
+
+  xValues.forEach((x) => yValues.forEach((y) => zValues.forEach((z) => {
+    const option = { ...candidate, x, y, z };
+    const overlap = placementOverlapVolume(option, placements, selectedIndex);
+    const support = supportCoverage({ x, y, z }, option, placements.filter((_, index) => index !== selectedIndex), 1e-7);
+    const move = Math.abs(option.x - current.x) + Math.abs(option.y - current.y) + Math.abs(option.z - current.z);
+    const wallContact =
+      (option.x <= 1e-7 ? 1 : 0) +
+      (option.z <= 1e-7 ? 1 : 0) +
+      (Math.abs(option.x + option.length - dimensions.length) <= 1e-7 ? 1 : 0) +
+      (Math.abs(option.z + option.width - dimensions.width) <= 1e-7 ? 1 : 0);
+    const unsupportedPenalty = support < 0.98 ? (0.98 - support) * 100000 : 0;
+    const forbiddenOverlapPenalty = option.allowOverlap ? 0 : (overlap > 1e-9 ? 1000000000 : 0);
+    const score = forbiddenOverlapPenalty + overlap * 10000000 + unsupportedPenalty + move * 20 - wallContact * 0.5;
+    if (!best || score < best.score) best = { placement: option, score, overlap, support };
+  })));
+
+  return best || { placement: candidate, score: 0, overlap: placementOverlapVolume(candidate, placements, selectedIndex), support: 1 };
+}
+
+function overlapNote(overlap) {
+  return overlap > 1e-9 ? " Překryv je ponechaný a označený šrafováním." : "";
+}
+
+function tryUpdateSelectedPlacement(candidate, successMessage = "Ruční úprava uložena v aktuálním plánu.") {
   if (!ensureManualPlan()) return;
   const index = state.selectedPlacementIndex;
   if (!Number.isInteger(index) || !state.manualPlan.placements[index]) return;
@@ -1859,9 +1940,21 @@ function tryUpdateSelectedPlacement(candidate) {
     return;
   }
   state.manualPlan.placements[index] = clonePlacement(candidate);
-  state.manualMessage = "Ruční úprava uložena v aktuálním plánu.";
+  state.manualMessage = successMessage;
   saveActiveLayout();
   render();
+}
+
+function applyBestSelectedPlacement(baseCandidate, successMessage) {
+  if (!ensureManualPlan()) return;
+  const index = state.selectedPlacementIndex;
+  const current = state.manualPlan.placements[index];
+  if (!current) return;
+  const dimensions = containerDimensions();
+  const placements = state.manualPlan.placements.map((placement) => clonePlacement(placement));
+  const allowed = Boolean(current.allowOverlap || baseCandidate.allowOverlap);
+  const best = bestManualCandidate({ ...baseCandidate, allowOverlap: allowed }, current, placements, dimensions, index);
+  tryUpdateSelectedPlacement(best.placement, `${successMessage}${overlapNote(best.overlap)}`);
 }
 
 function setSelectedOverlapPermission(allowed) {
@@ -1918,7 +2011,15 @@ function rotateSelectedPlacement() {
   const dimensions = containerDimensions();
   rotated.x = Math.max(0, Math.min(dimensions.length - rotated.length, rotated.x));
   rotated.z = Math.max(0, Math.min(dimensions.width - rotated.width, rotated.z));
-  tryUpdateSelectedPlacement(rotated);
+  applyBestSelectedPlacement(rotated, "Otočeno o 90° a posunuto na nejmenší možný konflikt.");
+}
+
+function alignSelectedPlacement() {
+  if (!ensureManualPlan()) return;
+  const index = state.selectedPlacementIndex;
+  const placement = state.manualPlan.placements[index];
+  if (!placement) return;
+  applyBestSelectedPlacement({ ...placement }, "Zarovnáno k nejbližším vhodným hranám bez změny otočení.");
 }
 
 function resetManualPlan() {
@@ -2206,6 +2307,7 @@ els.manualSelectStep.addEventListener("click", () => {
   if (placement) selectPlacement(placement.manualIndex);
 });
 els.manualRotate.addEventListener("click", rotateSelectedPlacement);
+els.manualAlign.addEventListener("click", alignSelectedPlacement);
 els.manualLeft.addEventListener("click", () => moveSelectedPlacement(0, 0, -manualStepMeters()));
 els.manualRight.addEventListener("click", () => moveSelectedPlacement(0, 0, manualStepMeters()));
 els.manualUp.addEventListener("click", () => moveSelectedPlacement(0, manualStepMeters(), 0));
