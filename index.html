@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Nakládka lodního kontejneru</title>
-    <link rel="stylesheet" href="styles.css?v=13" />
+    <link rel="stylesheet" href="styles.css?v=14" />
   </head>
   <body data-auth-state="loading">
     <section id="authShell" class="auth-shell" aria-label="Přihlášení">
@@ -205,6 +205,10 @@
                   Krok (mm)
                   <input id="manualStep" type="number" min="1" max="500" step="1" value="10" />
                 </label>
+                <label class="manual-overlap">
+                  <input id="manualAllowOverlap" type="checkbox" />
+                  <span>Povolit překrytí vybraného kusu</span>
+                </label>
                 <button id="manualReset" type="button" class="secondary">Zrušit ruční úpravy</button>
                 <span id="manualStatus">Klikni na kus ve 2D stěně.</span>
               </div>
@@ -317,6 +321,6 @@
       </article>
     </template>
 
-    <script src="auth.js?v=7"></script>
+    <script src="auth.js?v=8"></script>
   </body>
 </html>

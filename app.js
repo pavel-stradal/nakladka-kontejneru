@@ -192,6 +192,7 @@ const els = {
   manualDoor: document.querySelector("#manualDoor"),
   manualReset: document.querySelector("#manualReset"),
   manualStep: document.querySelector("#manualStep"),
+  manualAllowOverlap: document.querySelector("#manualAllowOverlap"),
   manualStatus: document.querySelector("#manualStatus"),
   canvas3d: document.querySelector("#container3d"),
   wall2d: document.querySelector("#wall2d"),
@@ -285,6 +286,8 @@ function clonePlacement(placement, index = null) {
     x: Math.max(0, Number(placement.x) || 0),
     y: Math.max(0, Number(placement.y) || 0),
     z: Math.max(0, Number(placement.z) || 0),
+    allowOverlap: Boolean(placement.allowOverlap),
+    isOverlapping: Boolean(placement.isOverlapping),
     manualIndex: index,
   };
 }
@@ -339,11 +342,19 @@ function summarizePacking(basePlan, placements, packages, dimensions, manualActi
     Math.max(max, Math.abs(share - (packages[index]?.normalizedShare || 0))), 0
   );
   let overlapCount = 0;
+  const overlappingIndexes = new Set();
   for (let left = 0; left < indexedPlacements.length; left += 1) {
     for (let right = left + 1; right < indexedPlacements.length; right += 1) {
-      if (placementsOverlap(indexedPlacements[left], indexedPlacements[right], 1e-7)) overlapCount += 1;
+      if (placementsOverlap(indexedPlacements[left], indexedPlacements[right], 1e-7)) {
+        overlapCount += 1;
+        overlappingIndexes.add(left);
+        overlappingIndexes.add(right);
+      }
     }
   }
+  indexedPlacements.forEach((placement, index) => {
+    placement.isOverlapping = overlappingIndexes.has(index);
+  });
   const { wallDepth, layers } = groupPlacementsIntoLayers(indexedPlacements, packages, dimensions);
   const minZ = indexedPlacements.length ? Math.min(...indexedPlacements.map((placement) => placement.z)) : 0;
   const maxZ = indexedPlacements.length ? Math.max(...indexedPlacements.map((placement) => placement.z + placement.width)) : 0;
@@ -910,7 +921,7 @@ function clearGroup(group) {
   }
 }
 
-function createPackageTexture(color) {
+function createPackageTexture(color, hatched = false) {
   const canvas = document.createElement("canvas");
   canvas.width = 64;
   canvas.height = 64;
@@ -919,6 +930,24 @@ function createPackageTexture(color) {
   context.fillRect(0, 0, 64, 64);
   context.fillStyle = color;
   context.fillRect(1, 1, 62, 62);
+  if (hatched) {
+    context.strokeStyle = "#fff200";
+    context.lineWidth = 6;
+    for (let offset = -64; offset < 128; offset += 14) {
+      context.beginPath();
+      context.moveTo(offset, 64);
+      context.lineTo(offset + 64, 0);
+      context.stroke();
+    }
+    context.strokeStyle = "#101412";
+    context.lineWidth = 2;
+    for (let offset = -64; offset < 128; offset += 14) {
+      context.beginPath();
+      context.moveTo(offset + 6, 64);
+      context.lineTo(offset + 70, 0);
+      context.stroke();
+    }
+  }
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.LinearFilter;
@@ -1705,10 +1734,11 @@ function renderWall2d(placements, fullWall, packages, dimensions, overview = fal
     piece.style.bottom = `${(placement.y / dimensions.height) * 100}%`;
     piece.style.width = `${(placement.width / dimensions.width) * 100}%`;
     piece.style.height = `${(placement.height / dimensions.height) * 100}%`;
-    piece.style.background = colors[packageIndex % colors.length];
+    piece.style.backgroundColor = colors[packageIndex % colors.length];
     piece.style.zIndex = String(Math.max(1, Math.round(placement.x * 1000)));
     piece.dataset.placementIndex = String(placement.manualIndex ?? "");
     piece.classList.toggle("is-selected", placement.manualIndex === state.selectedPlacementIndex);
+    piece.classList.toggle("is-overlapping", Boolean(placement.isOverlapping));
     piece.textContent = String(order);
     piece.title = `${order}. ${pkg.name}${placement.rotated ? " – otočit o 90°" : ""}`;
     piece.setAttribute("aria-label", piece.title);
@@ -1765,6 +1795,7 @@ function updateManualControls() {
   if (!els.manualStatus) return;
   const hasSelection = Number.isInteger(state.selectedPlacementIndex) && latestPacking?.placements[state.selectedPlacementIndex];
   const manualActive = Boolean(state.manualPlan && state.manualPlan.signature === layoutSignature());
+  const selectedPlacement = hasSelection ? latestPacking.placements[state.selectedPlacementIndex] : null;
   [
     els.manualRotate,
     els.manualLeft,
@@ -1776,6 +1807,8 @@ function updateManualControls() {
   ].forEach((button) => {
     button.disabled = !hasSelection;
   });
+  els.manualAllowOverlap.disabled = !hasSelection;
+  els.manualAllowOverlap.checked = Boolean(selectedPlacement?.allowOverlap);
   els.manualReset.disabled = !manualActive;
   els.manualStatus.textContent = state.manualMessage || (hasSelection
     ? `Vybrán kus ${state.selectedPlacementIndex + 1}.`
@@ -1805,7 +1838,7 @@ function placementFits(candidate, placements, dimensions, selectedIndex) {
   const overlap = placements.some((placement, index) =>
     index !== selectedIndex && placementsOverlap(candidate, placement, epsilon)
   );
-  if (overlap) return "Kus by se překrýval s jiným obalem.";
+  if (overlap && !candidate.allowOverlap) return "Kus by se překrýval s jiným obalem. Nejdřív u vybraného kusu povol překrytí.";
   if (supportCoverage({ x: candidate.x, y: candidate.y, z: candidate.z }, candidate, placements.filter((_, index) => index !== selectedIndex), epsilon) < 0.98) {
     return "Kus by neměl dostatečnou podporu zespodu.";
   }
@@ -1818,6 +1851,7 @@ function tryUpdateSelectedPlacement(candidate) {
   if (!Number.isInteger(index) || !state.manualPlan.placements[index]) return;
   const dimensions = containerDimensions();
   const placements = state.manualPlan.placements.map((placement) => clonePlacement(placement));
+  candidate.allowOverlap = Boolean(state.manualPlan.placements[index].allowOverlap || candidate.allowOverlap);
   const error = placementFits(candidate, placements, dimensions, index);
   if (error) {
     state.manualMessage = error;
@@ -1826,6 +1860,29 @@ function tryUpdateSelectedPlacement(candidate) {
   }
   state.manualPlan.placements[index] = clonePlacement(candidate);
   state.manualMessage = "Ruční úprava uložena v aktuálním plánu.";
+  saveActiveLayout();
+  render();
+}
+
+function setSelectedOverlapPermission(allowed) {
+  if (!ensureManualPlan()) return;
+  const index = state.selectedPlacementIndex;
+  if (!Number.isInteger(index) || !state.manualPlan.placements[index]) return;
+  const placements = state.manualPlan.placements.map((placement) => clonePlacement(placement));
+  const selected = { ...placements[index], allowOverlap: Boolean(allowed) };
+  const overlapsNow = placements.some((placement, placementIndex) =>
+    placementIndex !== index && placementsOverlap(selected, placement, 1e-7)
+  );
+  if (!allowed && overlapsNow) {
+    state.manualPlan.placements[index].allowOverlap = true;
+    state.manualMessage = "Kus se ještě překrývá. Nejdřív ho posuň mimo překrytí, potom jde povolení vypnout.";
+    updateManualControls();
+    return;
+  }
+  state.manualPlan.placements[index].allowOverlap = Boolean(allowed);
+  state.manualMessage = allowed
+    ? "Překrytí je povolené jen pro vybraný kus. Překryté obaly budou šrafované."
+    : "Překrytí pro vybraný kus je vypnuté.";
   saveActiveLayout();
   render();
 }
@@ -1946,35 +2003,41 @@ function renderThreeScene(packages, dimensions, packing = buildPackingPlan(packa
     const packagePlacements = visiblePlacements.filter((placement) => placement.packageIndex === index);
     if (!packagePlacements.length) return;
 
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const material = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      map: createPackageTexture(colors[index % colors.length]),
-    });
-    const boxes = new THREE.InstancedMesh(geometry, material, packagePlacements.length);
-    const matrix = new THREE.Matrix4();
-    const position = new THREE.Vector3();
-    const rotation = new THREE.Quaternion();
-    const boxScale = new THREE.Vector3();
-    const shade = new THREE.Color();
+    [
+      { placements: packagePlacements.filter((placement) => !placement.isOverlapping), hatched: false },
+      { placements: packagePlacements.filter((placement) => placement.isOverlapping), hatched: true },
+    ].forEach((batch) => {
+      if (!batch.placements.length) return;
+      const geometry = new THREE.BoxGeometry(1, 1, 1);
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        map: createPackageTexture(colors[index % colors.length], batch.hatched),
+      });
+      const boxes = new THREE.InstancedMesh(geometry, material, batch.placements.length);
+      const matrix = new THREE.Matrix4();
+      const position = new THREE.Vector3();
+      const rotation = new THREE.Quaternion();
+      const boxScale = new THREE.Vector3();
+      const shade = new THREE.Color();
 
-    packagePlacements.forEach((placement, instanceIndex) => {
-      position.set(
-        (placement.x + placement.length / 2 - dimensions.length / 2) * scale,
-        (placement.y + placement.height / 2 - dimensions.height / 2) * scale,
-        (placement.z + placement.width / 2 - dimensions.width / 2) * scale
-      );
-      boxScale.set(placement.length * scale, placement.height * scale, placement.width * scale);
-      matrix.compose(position, rotation, boxScale);
-      boxes.setMatrixAt(instanceIndex, matrix);
-      const shadeValue = instanceIndex % 2 === 0 ? 1 : 0.96;
-      shade.setRGB(shadeValue, shadeValue, shadeValue);
-      boxes.setColorAt(instanceIndex, shade);
-    });
+      batch.placements.forEach((placement, instanceIndex) => {
+        position.set(
+          (placement.x + placement.length / 2 - dimensions.length / 2) * scale,
+          (placement.y + placement.height / 2 - dimensions.height / 2) * scale,
+          (placement.z + placement.width / 2 - dimensions.width / 2) * scale
+        );
+        boxScale.set(placement.length * scale, placement.height * scale, placement.width * scale);
+        matrix.compose(position, rotation, boxScale);
+        boxes.setMatrixAt(instanceIndex, matrix);
+        const shadeValue = batch.hatched ? 1 : (instanceIndex % 2 === 0 ? 1 : 0.96);
+        shade.setRGB(shadeValue, shadeValue, shadeValue);
+        boxes.setColorAt(instanceIndex, shade);
+      });
 
-    boxes.instanceMatrix.needsUpdate = true;
-    boxes.instanceColor.needsUpdate = true;
-    threeState.fillGroup.add(boxes);
+      boxes.instanceMatrix.needsUpdate = true;
+      boxes.instanceColor.needsUpdate = true;
+      threeState.fillGroup.add(boxes);
+    });
   });
 
   const selectedPlacement = Number.isInteger(state.selectedPlacementIndex)
@@ -2150,6 +2213,7 @@ els.manualDown.addEventListener("click", () => moveSelectedPlacement(0, -manualS
 els.manualRear.addEventListener("click", () => moveSelectedPlacement(manualStepMeters(), 0, 0));
 els.manualDoor.addEventListener("click", () => moveSelectedPlacement(-manualStepMeters(), 0, 0));
 els.manualReset.addEventListener("click", resetManualPlan);
+els.manualAllowOverlap.addEventListener("change", () => setSelectedOverlapPermission(els.manualAllowOverlap.checked));
 els.wall2d.addEventListener("click", (event) => {
   const piece = event.target.closest(".wall-piece");
   if (!piece) return;
